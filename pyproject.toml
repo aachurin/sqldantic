@@ -1,0 +1,47 @@
+[tool.poetry]
+name = "sqldantic"
+version = "0.1.0"
+description = ""
+authors = ["a.churin <a.churin@qiwi.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pydantic = "^2.5.3"
+sqlalchemy = "^2.0.25"
+
+[tool.poetry.dev-dependencies]
+black = "^23.12.1"
+mypy = "^1.8.0"
+isort = "^5.13.2"
+autoflake = "^2.2.1"
+flake8 = "^7.0.0"
+flake8-pyproject = "^1.2.3"
+pytest = "^7.0.1"
+setuptools = "^69.0.3"
+
+[tool.flake8]
+max-line-length = 119
+exclude = [
+    ".git",
+    "__pycache__",
+    "__init__.py",
+    ".mypy_cache",
+    ".pytest_cache"
+]
+
+[tool.black]
+line-length = 119
+target-version = ['py311']
+
+[tool.isort]
+profile = "black"
+line_length = 119
+
+[tool.mypy]
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
