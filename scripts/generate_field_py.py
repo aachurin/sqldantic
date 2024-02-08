@@ -246,8 +246,8 @@ def generate_field_py() -> None:
             "__name_pos",  # must use name instead
             "type_",  # XXX: most likely we don’t need type_
             "args",  # unused in sqlalchemy
-            "default",  # dataclasses is not supported
-            "default_factory",  # dataclasses is not supported
+            "default",  # used by pydantic
+            "default_factory",  # used by pydantic
             "kw",  # dataclasses is not supported
             "init",  # dataclasses is not supported
             "repr",  # dataclasses is not supported
@@ -260,8 +260,8 @@ def generate_field_py() -> None:
         relationship,
         ignored={"_NoArg"},
         excluded=[
-            "default",  # dataclasses is not supported
-            "default_factory",  # dataclasses is not supported
+            "default",  # used by pydantic
+            "default_factory",  # used by pydantic
             "kw",  # dataclasses is not supported
             "init",  # dataclasses is not supported
             "repr",  # dataclasses is not supported
