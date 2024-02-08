@@ -2,5 +2,5 @@
 set -x
 
 autoflake --remove-all-unused-imports --recursive --remove-unused-variables --in-place sqldantic tests --exclude=__init__.py
-black sqldantic tests
-isort --atomic sqldantic tests
+black sqldantic tests scripts
+isort --atomic sqldantic tests scripts

@@ -1,3 +1,5 @@
-from .main import DeclarativeBase, Field, Relationship
+from .field import Field, Relationship
+from .main import DeclarativeBase
+from .sqltypes import Typed
 
-__all__ = ("Field", "Relationship", "DeclarativeBase")
+__all__ = ("Field", "Relationship", "DeclarativeBase", "Typed")

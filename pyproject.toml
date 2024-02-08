@@ -2,22 +2,22 @@
 name = "sqldantic"
 version = "0.1.0"
 description = ""
-authors = ["a.churin <a.churin@qiwi.com>"]
+authors = ["a.churin <aachurin@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-pydantic = "^2.5.3"
+pydantic = "^2.6.1"
 sqlalchemy = "^2.0.25"
 
 [tool.poetry.dev-dependencies]
-black = "^23.12.1"
+black = "^24.1.0"
 mypy = "^1.8.0"
 isort = "^5.13.2"
 autoflake = "^2.2.1"
 flake8 = "^7.0.0"
 flake8-pyproject = "^1.2.3"
-pytest = "^7.0.1"
+pytest = "^8.0.0"
 setuptools = "^69.0.3"
 
 [tool.flake8]
