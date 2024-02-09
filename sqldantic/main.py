@@ -129,7 +129,8 @@ def _complete_model_init(cls: type[Any]) -> None:
 
     if getattr(cls, "__sqldantic_table__", False):
         annotations: dict[str, Any] = {}
-        for key, field in getattr(cls, "model_fields").items():
+        models_fields = getattr(cls, "model_fields")
+        for key, field in models_fields.items():
             ann, default = _mapped_column_from_field(cls.__name__, key, field)
             annotations[key] = ann
             if default is not None:
@@ -138,8 +139,8 @@ def _complete_model_init(cls: type[Any]) -> None:
         DeclarativeMeta.__init__(cast(DeclarativeMeta, cls), cls.__name__, cls.__bases__, {})
         for column in inspect(cls).columns:
             if isinstance(column.type, PostponedAnnotation):
-                ann = cls.model_fields[column.key].annotation  # type:ignore
-                column.type.provide_annotation(ann)
+                # pass only annotation here
+                column.type.provide_annotation(_get_annotation_from_field(models_fields[column.key]))
 
 
 def _setup_declarative_base(
@@ -374,7 +375,6 @@ def _mapped_column_from_field(
     marker = field._attributes_set.get("_marker")
     assert marker is None or isinstance(marker, _MetaMarker)
 
-    filtered_metadata: list[Any] = []
     for meta in field.metadata:
         if isinstance(meta, MappedColumn):
             raise TypeError(
@@ -392,14 +392,14 @@ def _mapped_column_from_field(
                     f"Type annotation for `{cls_name}.{key}` can't be correctly interpreted:\n"
                     f"Don't mix `sqldantic.Field` and `sqldantic.Relationship` "
                 )
-            continue
-        filtered_metadata.append(meta)
-    if filtered_metadata:
-        annotation = Mapped[Annotated[field.annotation, *filtered_metadata]]  # type:ignore
-    else:
-        annotation = Mapped[field.annotation]  # type:ignore
 
+    annotation = Mapped[_get_annotation_from_field(field)]  # type:ignore
     return annotation, (marker.construct(field) if marker else None)
+
+
+def _get_annotation_from_field(field: FieldInfo) -> Any:
+    metadata = [meta for meta in field.metadata if not isinstance(meta, _MetaMarker)]
+    return Annotated[field.annotation, *metadata] if metadata else field.annotation
 
 
 class DeclarativeBase(BaseModel, metaclass=SQLModelMetaclass):

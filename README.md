@@ -1,7 +1,7 @@
 # sqldantic
-SQLalchemy and pyDANTIC integration
+SQLalchemy + pyDANTIC
 
-Usage example:
+### Example:
 ```python
 from __future__ import annotations
 
@@ -51,4 +51,36 @@ class Host(HostBase, table=True):
     id: Mapped[int] = Field(primary_key=True)
     cluster_id: Mapped[int] = Field(ForeignKey("cluster.id"))
 
+```
+
+### Descripion
+Any subclass of `DeclarativeBase` is Pydantic Model.
+
+Any subclass of `DeclarativeBase` with `table=True` is Sqlalchemy Model.
+
+Both `Mapped[...]` and "unmapped" formats are supported, but Sqlalchemy needs `Mapped` for mypy type checking, 
+so `Mapped` is preferred. 
+
+Sometimes it's impossible to use generic Sqlalchemy types:
+
+```python
+class Foo(Base, table=True):
+    ...
+    address: Mapped[ipaddress.IPv4Address]
+    info: Mapped[Info]
+    ...
+```
+
+Both `address` and `info` are not supported by Sqlalchemy. 
+
+In such case, you can use special `Typed` type, which can handle any pydantic-supported types:
+
+```python
+class Foo(Base, table=True):
+    ...
+    address: Mapped[ipaddress.IPv4Address] = Field(Typed(String))
+    # means validate value as an IPv4Address object, but store it as a String
+    info: Mapped[Info] = Field(Typed(JSONB))
+    # means validate value as an Info object, but store it as a JSONB
+    ...
 ```

@@ -1,9 +1,28 @@
 [tool.poetry]
 name = "sqldantic"
 version = "0.1.0"
-description = ""
-authors = ["a.churin <aachurin@gmail.com>"]
+description = "sqlalchemy and pydantic integration."
+authors = ["Andrey Churin <aachurin@gmail.com>"]
 readme = "README.md"
+homepage = "https://github.com/aachurin/sqldantic"
+repository = "https://github.com/aachurin/sqldantic"
+license = "Unlicense"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Database :: Database Engines/Servers",
+    "Topic :: Internet",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Internet :: WWW/HTTP",
+    "Typing :: Typed",
+]
 
 [tool.poetry.dependencies]
 python = "^3.10"
