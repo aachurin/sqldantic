@@ -1,39 +1,14 @@
 import enum
 import ipaddress
-from typing import Annotated
 
 from pydantic import BaseModel
-from sqlalchemy import JSON, ForeignKey, String, create_engine, select
+from sqlalchemy import JSON, ForeignKey, String, select
 from sqlalchemy.orm import Mapped, Session
 
-from sqldantic import DeclarativeBase, Field, Relationship, Typed
-from sqldantic.field import _MappedColumnMarker, _RelationshipMarker
+from sqldantic import Field, Relationship, Typed
 
 
-def test_pydantic_meta_tricks() -> None:
-    X = Annotated[int, 1, Relationship(back_populates="foo"), Field(primary_key=True), Field(index=True)]
-
-    class Model(BaseModel):
-        a: X = Field(comment="foo")  # type:ignore
-
-    field = Model.model_fields["a"]
-    assert _MappedColumnMarker in field.metadata
-    assert _RelationshipMarker in field.metadata
-    assert 1 in field.metadata
-    assert field._attributes_set == {
-        "back_populates": "foo",
-        "primary_key": True,
-        "index": True,
-        "comment": "foo",
-        "annotation": int,
-        "_marker": _MappedColumnMarker,
-    }
-
-
-def test_mixed_mapping() -> None:
-    class Base(DeclarativeBase):
-        pass
-
+def test_mixed_mapping(Base, engine) -> None:
     class Hero(Base, table=True):
         id: Mapped[int] = Field(default=None, primary_key=True)
         name: str
@@ -42,8 +17,6 @@ def test_mixed_mapping() -> None:
 
     hero_1 = Hero(name="Deadpond", secret_name="Dive Wilson")
     hero_2 = Hero(name="Deadpond", secret_name="Dive Wilson")
-
-    engine = create_engine("sqlite://")
 
     Base.metadata.create_all(engine)
 
@@ -63,9 +36,7 @@ def test_mixed_mapping() -> None:
         assert heroes[0].name == heroes[1].name
 
 
-def test_relationship() -> None:
-    class Base(DeclarativeBase):
-        pass
+def test_relationship(Base, engine) -> None:
 
     class Parent(Base, table=True):
         id: Mapped[int] = Field(primary_key=True)
@@ -85,8 +56,6 @@ def test_relationship() -> None:
     child1 = Child(name="Child1", parent=parent1)
     child2 = Child(name="Child2", parent=parent1)
 
-    engine = create_engine("sqlite://", echo=True)
-
     Base.metadata.create_all(engine)
 
     with Session(engine) as session:
@@ -102,10 +71,7 @@ def test_relationship() -> None:
         assert ["Child1", "Child2"] == [x.name for x in parents[0].children]
 
 
-def test_typed() -> None:
-    class Base(DeclarativeBase):
-        pass
-
+def test_typed(Base, engine) -> None:
     class Kind(str, enum.Enum):
         postgres = "postgres"
         oracle = "oracle"
@@ -132,8 +98,6 @@ def test_typed() -> None:
         address="192.168.1.2",
     )
 
-    engine = create_engine("sqlite://", echo=True)
-
     Base.metadata.create_all(engine)
 
     with Session(engine) as session:
@@ -146,10 +110,7 @@ def test_typed() -> None:
     assert db1.address == ipaddress.IPv4Address("192.168.1.2")
 
 
-def test_example() -> None:
-    class Base(DeclarativeBase):
-        pass
-
+def test_example(Base, engine) -> None:
     class OS(str, enum.Enum):
         linux = "linux"
         windows = "windows"
@@ -178,8 +139,6 @@ def test_example() -> None:
 
     # need in function only
     Base.update_incomplete_models()
-
-    engine = create_engine("sqlite://", echo=True)
 
     Base.metadata.create_all(engine)
 

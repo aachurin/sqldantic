@@ -1,23 +1,21 @@
 from __future__ import annotations
 
-import re
-import sys
 import weakref
-from typing import TYPE_CHECKING, Annotated, Any, Callable, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 import annotated_types
 from pydantic import BaseModel, ConfigDict
-from pydantic._internal._model_construction import ModelMetaclass, build_lenient_weakvaluedict
-from pydantic._internal._typing_extra import parent_frame_namespace
+from pydantic._internal._model_construction import ModelMetaclass
 from pydantic.fields import FieldInfo
 from sqlalchemy import inspect
-from sqlalchemy.orm import Mapped, MappedColumn, declared_attr, instrumentation
+from sqlalchemy.orm import MappedColumn, declared_attr, instrumentation
 from sqlalchemy.orm import registry as Registry
-from sqlalchemy.orm.base import DEFAULT_STATE_ATTR, _MappedAnnotationBase
+from sqlalchemy.orm.base import DEFAULT_STATE_ATTR
 from sqlalchemy.orm.decl_api import DeclarativeMeta
 from sqlalchemy.orm.relationships import Relationship as SQLARelationship
 
-from .field import Field, Relationship, _MetaMarker
+from . import typing_extra
+from .field import Field, Relationship, _MappedMetaMarker
 from .sqltypes import PostponedAnnotation
 
 __all__ = ("Field", "Relationship", "DeclarativeBase")
@@ -56,7 +54,6 @@ class SQLModelMetaclass(ModelMetaclass, DeclarativeMeta):
             config = {
                 "metadata": namespace.pop("metadata", None),
                 "type_annotation_map": namespace.pop("type_annotation_map", None),
-                "registry": namespace.pop("registry", None),
             }
             for key in namespace:
                 if key in ("__module__", "__qualname__", "model_config"):
@@ -79,7 +76,7 @@ class SQLModelMetaclass(ModelMetaclass, DeclarativeMeta):
 
         # need manual initialization of __pydantic_parent_namespace__
         # otherwise it will be incorrectly initialized from the current frame
-        namespace["__pydantic_parent_namespace__"] = build_lenient_weakvaluedict(parent_frame_namespace())
+        namespace["__pydantic_parent_namespace__"] = typing_extra.pydantic_parent_frame_namespace()
 
         # initialize class for pydantic (sqlalchemy not uses __new__)
         cls = super().__new__(mcs, cls_name, bases, namespace, **kwargs)
@@ -95,18 +92,18 @@ class SQLModelMetaclass(ModelMetaclass, DeclarativeMeta):
 
     def __init__(cls, cls_name: Any, bases: Any, namespace: Any, **kw: Any) -> None:
         ModelMetaclass.__init__(cls, cls_name, bases, namespace, **kw)
-        if _populate_model_to_globals(cls):
-            _update_incomplete_models(cls, _parent_namespace_depth=1)
+        if _populate_model_to_parent_namespace(cls):
+            _update_incomplete_models(cls)
         if not getattr(cls, "__pydantic_complete__", False):
             getattr(cls, "__sqldantic_incomplete_models__").add(cls)
         else:
             _complete_model_init(cls)
 
 
-def _populate_model_to_globals(cls: type[Any]) -> bool:
-    frame = sys._getframe(2)
-    if frame.f_locals is frame.f_globals:
-        frame.f_globals[cls.__name__] = cls
+def _populate_model_to_parent_namespace(cls: type[Any], *, parent_depth: int = 1) -> bool:
+    ns = typing_extra.parent_writable_namespace(parent_depth=parent_depth + 1)
+    if ns is not None:
+        ns[cls.__name__] = cls
         return True
     return False
 
@@ -115,11 +112,11 @@ def _update_incomplete_models(
     cls: type[Any],
     *,
     raise_errors: bool = False,
-    _parent_namespace_depth: int = 0,
+    parent_depth: int = 1,
 ) -> None:
     if incomplete_models := getattr(cls, "__sqldantic_incomplete_models__", None):
         for cls in list(incomplete_models):
-            cls.model_rebuild(raise_errors=raise_errors, _parent_namespace_depth=_parent_namespace_depth + 1)
+            cls.model_rebuild(raise_errors=raise_errors, _parent_namespace_depth=parent_depth + 1)
 
 
 def _complete_model_init(cls: type[Any]) -> None:
@@ -139,8 +136,7 @@ def _complete_model_init(cls: type[Any]) -> None:
         DeclarativeMeta.__init__(cast(DeclarativeMeta, cls), cls.__name__, cls.__bases__, {})
         for column in inspect(cls).columns:
             if isinstance(column.type, PostponedAnnotation):
-                # pass only annotation here
-                column.type.provide_annotation(_get_annotation_from_field(models_fields[column.key]))
+                column.type.provide_annotation(*typing_extra.annotation_from_field(models_fields[column.key]))
 
 
 def _setup_declarative_base(
@@ -148,29 +144,8 @@ def _setup_declarative_base(
     *,
     metadata: Any,
     type_annotation_map: Any,
-    registry: Any,
 ) -> None:
-    if registry is not None:
-        if not isinstance(registry, Registry):
-            raise TypeError(
-                "Declarative base class has a `registry` attribute that is "
-                "not an instance of `sqlalchemy.orm.registry()`"
-            )
-        if type_annotation_map is not None:
-            raise TypeError(
-                "Declarative base class has both a `registry` attribute and a "
-                "`type_annotation_map` entry. Please apply the type_annotation_map "
-                "to this registry directly."
-            )
-        if metadata is not None:
-            raise TypeError(
-                "Declarative base class has both a `registry` attribute and a "
-                "metadata entry. Please apply the metadata "
-                "to this registry directly."
-            )
-    else:
-        registry = Registry(metadata=metadata, type_annotation_map=type_annotation_map)
-
+    registry = Registry(metadata=metadata, type_annotation_map=type_annotation_map)
     _check_registry_type_annotation_map(cls, registry)
 
     setattr(cls, "_sa_registry", registry)
@@ -184,7 +159,7 @@ def _setup_declarative_base(
 def _check_registry_type_annotation_map(cls: type[Any], registry: Registry) -> None:
     cls_name = cls.__name__
     for key in registry.type_annotation_map:
-        if get_origin(key) is Annotated:
+        if typing_extra.is_annotated(key):
             for meta in key.__metadata__:
                 if isinstance(meta, FieldInfo):
                     raise TypeError(
@@ -212,18 +187,13 @@ def _check_registry_type_annotation_map(cls: type[Any], registry: Registry) -> N
                     )
 
 
-def _adapt_annotations(cls_name: str, namespace: dict[str, Any]) -> None:
+def _adapt_annotations(cls_name: str, namespace: dict[str, Any], *, parent_depth: int = 1) -> None:
     if not (annotations := namespace.get("__annotations__")):
         return
 
-    frame = sys._getframe(2)
-    localns, globalns = frame.f_locals, frame.f_globals
-
-    for key, origin_ann in annotations.items():
-        try:
-            annotations[key] = _unwrap_annotation(origin_ann, globalns, localns)
-        except NameError as err:
-            raise TypeError(f"Type annotation for `{cls_name}.{key}` can't be correctly interpreted:\n" f"{str(err)}")
+    parent_depth += 1
+    for key, ann_type in annotations.items():
+        annotations[key] = typing_extra.unmapped_annotation(ann_type, parent_depth=parent_depth)
         field = namespace.get(key)
         if isinstance(field, MappedColumn):
             raise TypeError(
@@ -235,30 +205,6 @@ def _adapt_annotations(cls_name: str, namespace: dict[str, Any]) -> None:
                 f"Type annotation for `{cls_name}.{key}` can't be correctly interpreted:\n"
                 f"Use `sqldantic.Relationship` instead of `sqlalchemy.orm.relationship`."
             )
-
-
-def _get_module_globals(module_name: str) -> dict[str, Any]:
-    try:
-        return sys.modules[module_name].__dict__
-    except KeyError as ke:
-        raise NameError(
-            f"Module `{module_name}` isn't present in sys.modules",
-        ) from ke
-
-
-def _unwrap_annotation(ann: Any, globalns: dict[str, Any], localns: dict[str, Any]) -> Any:
-    if isinstance(ann, str):
-        if m := re.match(r"^([a-zA-Z0-9_.\s]*)\[(.*)]$", ann.strip()):
-            typename, args = m.groups()
-            origin = eval(typename, globalns, localns)
-            if isinstance(origin, type) and issubclass(origin, _MappedAnnotationBase):
-                return args
-        return ann
-    origin = get_origin(ann)
-    if origin and isinstance(origin, type) and issubclass(origin, _MappedAnnotationBase):
-        args = get_args(ann)
-        return args[0] if len(args) == 1 else args
-    return ann
 
 
 def _compile_init_values(cls: BaseModel) -> Any:
@@ -373,7 +319,7 @@ def _mapped_column_from_field(
     field: FieldInfo,
 ) -> tuple[Any, MappedColumn | SQLARelationship | None]:
     marker = field._attributes_set.get("_marker")
-    assert marker is None or isinstance(marker, _MetaMarker)
+    assert marker is None or isinstance(marker, _MappedMetaMarker)
 
     for meta in field.metadata:
         if isinstance(meta, MappedColumn):
@@ -386,20 +332,16 @@ def _mapped_column_from_field(
                 f"Type annotation for `{cls_name}.{key}` can't be correctly interpreted:\n"
                 f"Use `sqldantic.Relationship` instead of `sqlalchemy.orm.relationship` inside Annotated types."
             )
-        if isinstance(meta, _MetaMarker):
-            if meta is not marker:
-                raise TypeError(
-                    f"Type annotation for `{cls_name}.{key}` can't be correctly interpreted:\n"
-                    f"Don't mix `sqldantic.Field` and `sqldantic.Relationship` "
-                )
+        if isinstance(meta, _MappedMetaMarker) and meta is not marker:
+            raise TypeError(
+                f"Type annotation for `{cls_name}.{key}` can't be correctly interpreted:\n"
+                f"Don't mix `sqldantic.Field` and `sqldantic.Relationship` "
+            )
 
-    annotation = Mapped[_get_annotation_from_field(field)]  # type:ignore
-    return annotation, (marker.construct(field) if marker else None)
-
-
-def _get_annotation_from_field(field: FieldInfo) -> Any:
-    metadata = [meta for meta in field.metadata if not isinstance(meta, _MetaMarker)]
-    return Annotated[field.annotation, *metadata] if metadata else field.annotation
+    return (
+        typing_extra.mapped_from_field(field),
+        marker.construct(field) if marker else None,
+    )
 
 
 class DeclarativeBase(BaseModel, metaclass=SQLModelMetaclass):
@@ -421,11 +363,11 @@ class DeclarativeBase(BaseModel, metaclass=SQLModelMetaclass):
     locals().update(_install_declarative_base_methods())
 
     @classmethod
-    def update_incomplete_models(cls, *, _parent_namespace_depth: int = 0) -> None:
+    def update_incomplete_models(cls, *, parent_depth: int = 0) -> None:
         _update_incomplete_models(
             cls,
             raise_errors=True,
-            _parent_namespace_depth=_parent_namespace_depth + 1,
+            parent_depth=parent_depth + 1,
         )
 
     @classmethod
@@ -441,6 +383,9 @@ class DeclarativeBase(BaseModel, metaclass=SQLModelMetaclass):
         result = super().model_rebuild(
             raise_errors=raise_errors,
             _parent_namespace_depth=_parent_namespace_depth + 3,
+            # +1 current frame
+            # +1 super().model_rebuild frame
+            # +1 _typing_extra.parent_frame_namespace
             _types_namespace=_types_namespace,
         )
         if result:

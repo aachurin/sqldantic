@@ -53,7 +53,7 @@ class Host(HostBase, table=True):
 
 ```
 
-### Descripion
+### Description
 Any subclass of `DeclarativeBase` is Pydantic Model.
 
 Any subclass of `DeclarativeBase` with `table=True` is Sqlalchemy Model.

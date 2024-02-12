@@ -34,7 +34,21 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.schema import SchemaConst
 
 
-class _MetaMarker:
+class _Marker:
+    __slots__ = ()
+
+
+class _MappedTypeMarker(_Marker):
+    __slots__ = ("type",)
+
+    def __init__(self, type_: Any):
+        self.type = type_
+
+    def __repr__(self) -> str:
+        return f"Marker({self.type.__name__})"
+
+
+class _MappedMetaMarker(_Marker):
     __slots__ = ()
     attributes: ClassVar[frozenset[str]]
     constructor: ClassVar[Callable]
@@ -47,8 +61,11 @@ class _MetaMarker:
             return cls.constructor(**kwargs, **(extra_kwargs or {}))  # type:ignore
         return None
 
+    def __repr__(self) -> str:
+        return f"Marker({self.constructor.__name__})"
 
-class __MappedColumnMarker(_MetaMarker):
+
+class __MappedColumnMarker(_MappedMetaMarker):
     __slots__ = ()
     attributes = frozenset(
         (
@@ -81,7 +98,7 @@ class __MappedColumnMarker(_MetaMarker):
     constructor = mapped_column
 
 
-class __RelationshipMarker(_MetaMarker):
+class __RelationshipMarker(_MappedMetaMarker):
     __slots__ = ()
     attributes = frozenset(
         (

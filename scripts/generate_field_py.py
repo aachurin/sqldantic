@@ -182,7 +182,21 @@ if TYPE_CHECKING:
     {type_checking_imports}
     
 
-class _MetaMarker:
+class _Marker:
+    __slots__ = ()
+
+
+class _MappedTypeMarker(_Marker):
+    __slots__ = ("type", )
+    
+    def __init__(self, type_: Any):
+        self.type = type_
+        
+    def __repr__(self) -> str:
+        return f"Marker({{self.type.__name__}})"
+
+
+class _MappedMetaMarker(_Marker):
     __slots__ = ()
     attributes: ClassVar[frozenset[str]]
     constructor: ClassVar[Callable]
@@ -194,9 +208,12 @@ class _MetaMarker:
         if kwargs or extra_kwargs:
             return cls.constructor(**kwargs, **(extra_kwargs or {{}}))  # type:ignore
         return None
-
-
-class __MappedColumnMarker(_MetaMarker):
+        
+    def __repr__(self) -> str:
+        return f"Marker({{self.constructor.__name__}})"
+        
+        
+class __MappedColumnMarker(_MappedMetaMarker):
     __slots__ = ()
     attributes = frozenset((
         {field_info_attrs}
@@ -204,7 +221,7 @@ class __MappedColumnMarker(_MetaMarker):
     constructor = mapped_column
     
 
-class __RelationshipMarker(_MetaMarker):
+class __RelationshipMarker(_MappedMetaMarker):
     __slots__ = ()
     attributes = frozenset((
         {relationship_info_attrs}
@@ -331,7 +348,7 @@ def generate_field_py() -> None:
 
 
 def get_function_args(
-    func: FunctionType,
+    func: Any,
     *,
     imports: dict[str, set[str]],
     excluded: list[str] | None = None,
