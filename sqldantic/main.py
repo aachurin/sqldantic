@@ -17,6 +17,10 @@ from sqlalchemy.orm.relationships import Relationship as SQLARelationship
 from . import typing_extra
 from .field import Field, Relationship, _MappedMetaMarker
 from .sqltypes import PostponedAnnotation
+from .typemap import DEFAULT_TYPE_MAP
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm.decl_api import _TypeAnnotationMapType
 
 __all__ = ("Field", "Relationship", "DeclarativeBase")
 
@@ -136,16 +140,19 @@ def _complete_model_init(cls: type[Any]) -> None:
         DeclarativeMeta.__init__(cast(DeclarativeMeta, cls), cls.__name__, cls.__bases__, {})
         for column in inspect(cls).columns:
             if isinstance(column.type, PostponedAnnotation):
-                column.type.provide_annotation(*typing_extra.annotation_from_field(models_fields[column.key]))
+                column.type.provide_annotation(typing_extra.annotation_from_field(models_fields[column.key]))
 
 
 def _setup_declarative_base(
     cls: type,
     *,
     metadata: Any,
-    type_annotation_map: Any,
+    type_annotation_map: _TypeAnnotationMapType | None,
 ) -> None:
-    registry = Registry(metadata=metadata, type_annotation_map=type_annotation_map)
+    default_type_map = {**DEFAULT_TYPE_MAP}
+    if type_annotation_map:
+        default_type_map.update(type_annotation_map)
+    registry = Registry(metadata=metadata, type_annotation_map=default_type_map)
     _check_registry_type_annotation_map(cls, registry)
 
     setattr(cls, "_sa_registry", registry)

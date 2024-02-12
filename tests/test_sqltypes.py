@@ -1,8 +1,8 @@
 from ipaddress import IPv4Address
-from sqlalchemy import select
+
 from sqlalchemy.orm import Mapped, Session
 
-from sqldantic import Field, Relationship
+from sqldantic import Field
 
 
 def test_ipv4address(Base, engine) -> None:
@@ -13,13 +13,12 @@ def test_ipv4address(Base, engine) -> None:
     Base.metadata.create_all(engine)
 
     with Session(engine) as session:
-        session.add(child1)
-        session.add(child2)
+        host1 = Host(addr="192.168.1.1")
+        host2 = Host(addr=IPv4Address("192.168.1.2"))
+        session.add(host1)
+        session.add(host2)
         session.commit()
-        session.refresh(child1)
-        session.refresh(child2)
-        assert child1.parent and child1.parent.name == "Parent1"
-        assert child2.parent and child2.parent.name == "Parent1"
-        parents = session.execute(select(Parent)).scalars().all()
-        assert parents and parents[0].name == "Parent1"
-        assert ["Child1", "Child2"] == [x.name for x in parents[0].children]
+        session.refresh(host1)
+        session.refresh(host2)
+        assert host1.addr == IPv4Address("192.168.1.1")
+        assert host2.addr == IPv4Address("192.168.1.2")

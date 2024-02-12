@@ -28,10 +28,19 @@ def parent_writable_namespace(*, parent_depth: int = 1) -> dict[str, Any] | None
     return None
 
 
-def make_annotated(tp: type[Any] | str, *metadata: Any) -> type[Any] | str:
+def make_annotated(tp: type[Any] | str | None, *metadata: Any) -> type[Any] | str | None:
     if metadata:
         return Annotated[tp, *metadata]  # type:ignore
     return tp
+
+
+# unwrap_annotated is reversed to make_annotated:
+# unwrap_annotated(make_annotated(int, 1, 2)) == [int, 1, 2]
+# make_annotated(*unwrap_annotated(Annotated[int, 1, 2])) == Annotated[int, 1, 2]
+def unwrap_annotated(ann_type: Any) -> list[Any]:
+    if is_annotated(ann_type):
+        return list(get_args(ann_type))
+    return [ann_type]
 
 
 def unmapped_annotation(ann: Any, *, parent_depth: int = 1) -> Any:
@@ -53,8 +62,8 @@ def unmapped_annotation(ann: Any, *, parent_depth: int = 1) -> Any:
 def mapped_from_field(field: FieldInfo) -> Any:
     marker = [meta for meta in field.metadata if isinstance(meta, _MappedTypeMarker)]
     mapped_class = marker[0].type if marker else Mapped
-    return mapped_class[make_annotated(*annotation_from_field(field))]
+    return mapped_class[annotation_from_field(field)]
 
 
-def annotation_from_field(field: FieldInfo) -> list[Any]:
-    return [field.annotation] + [meta for meta in field.metadata if not isinstance(meta, _Marker)]
+def annotation_from_field(field: FieldInfo) -> Any:
+    return make_annotated(field.annotation, *[meta for meta in field.metadata if not isinstance(meta, _Marker)])
