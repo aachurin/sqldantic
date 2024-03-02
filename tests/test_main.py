@@ -144,9 +144,19 @@ def test_example(Base, engine) -> None:
 
     cluster = Cluster(name="demo")
     info1 = Info(os=OS.linux, tags={"ubuntu", "ubuntu23"})
-    host1 = Host(hostname="server1", cluster=cluster, address=ipaddress.IPv4Address("192.168.1.2"), info=info1)
+    host1 = Host(
+        hostname="server1",
+        cluster=cluster,
+        address=ipaddress.IPv4Address("192.168.1.2"),
+        info=info1,
+    )
     info2 = Info(os=OS.macos, tags={"macosx", "macosx14"})
-    host2 = Host(hostname="server2", cluster=cluster, address=ipaddress.IPv4Address("192.168.1.3"), info=info2)
+    host2 = Host(
+        hostname="server2",
+        cluster=cluster,
+        address=ipaddress.IPv4Address("192.168.1.3"),
+        info=info2,
+    )
 
     with Session(engine) as session:
         session.add(host1)

@@ -3,7 +3,6 @@ import re
 import sys
 import textwrap
 import types
-from types import FunctionType
 from typing import Any, Callable, NamedTuple
 
 import pydantic
@@ -29,7 +28,12 @@ class AnnParser:
         "Type": "type",
     }
 
-    def __init__(self, module_name: str, import_cache: dict[str, set[str]], ignore: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        module_name: str,
+        import_cache: dict[str, set[str]],
+        ignore: set[str] | None = None,
+    ) -> None:
         self.module_name = module_name
         self.import_cache = import_cache
         self.ignore = ignore or set()
@@ -63,7 +67,7 @@ class AnnParser:
         return result
 
     def parse_item(self, ann: str, ignored: bool) -> tuple[list[str], str]:
-        typename, rest = re.match(r"^\s*([a-zA-Z0-9_.\s]*)(.*)$", ann).groups()
+        typename, rest = re.match(r"^\s*([a-zA-Z0-9_.\s]*)(.*)$", ann).groups()  # type:ignore
         typename = ".".join(x.strip() for x in typename.split("."))
         if typename:
             typename, import_name, module_name = self.resolve_typename(typename)
@@ -86,15 +90,18 @@ class AnnParser:
 
         if ignored:
             return [], rest
-        assert args is not None or typename, f"Invalid annotation {ann}"
+
+        if typename and args is None:
+            return [typename], rest
+
+        assert args is not None
         if typename == "Union":
             return self.normalize_ann(args), rest
         if typename == "Optional":
             return self.normalize_ann(args + ["None"]), rest
         if typename and args:
             return [f"{typename}[{', '.join(args)}]"], rest
-        if typename:
-            return [typename], rest
+
         return [f"[{', '.join(args)}]"], rest
 
     @staticmethod
@@ -110,7 +117,7 @@ class AnnParser:
                 m = re.match(r"^('(?:[^'\\]|\\.)*')()(.*)", rest)
             if not m:
                 m = re.match(r"^([^\[\],]*)([\[\],]?)(.*)$", rest)
-            first, token, rest = m.groups()
+            first, token, rest = m.groups()  # type:ignore
             collected += first.strip()
             if token == "[":
                 depth += 1
@@ -178,25 +185,27 @@ from pydantic.fields import FieldInfo, _Unset
 from sqlalchemy.orm import MappedColumn as _MappedColumn, mapped_column, relationship
 from sqlalchemy.orm.relationships import Relationship as _Relationship
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     {type_checking_imports}
     
+__all__ = ("Field", "Relationship")
 
-class _Marker:
+
+class _Meta:
     __slots__ = ()
 
 
-class _MappedTypeMarker(_Marker):
-    __slots__ = ("type", )
+class _Origin(_Meta):
+    __slots__ = ("origin", )
     
-    def __init__(self, type_: Any):
-        self.type = type_
+    def __init__(self, origin: Any):
+        self.origin = origin
         
     def __repr__(self) -> str:
-        return f"Marker({{self.type.__name__}})"
+        return f"Marker({{self.origin.__name__}})"
 
 
-class _MappedMetaMarker(_Marker):
+class _Marker(_Meta):
     __slots__ = ()
     attributes: ClassVar[frozenset[str]]
     constructor: ClassVar[Callable]
@@ -213,7 +222,7 @@ class _MappedMetaMarker(_Marker):
         return f"Marker({{self.constructor.__name__}})"
         
         
-class __MappedColumnMarker(_MappedMetaMarker):
+class __FieldMarker(_Marker):
     __slots__ = ()
     attributes = frozenset((
         {field_info_attrs}
@@ -221,7 +230,7 @@ class __MappedColumnMarker(_MappedMetaMarker):
     constructor = mapped_column
     
 
-class __RelationshipMarker(_MappedMetaMarker):
+class __RelationshipMarker(_Marker):
     __slots__ = ()
     attributes = frozenset((
         {relationship_info_attrs}
@@ -229,7 +238,7 @@ class __RelationshipMarker(_MappedMetaMarker):
     constructor = relationship
 
 
-_MappedColumnMarker = __MappedColumnMarker()
+_FieldMarker = __FieldMarker()
 _RelationshipMarker = __RelationshipMarker()
 
 
@@ -237,7 +246,17 @@ def Field(
     {field_args}
 ) -> _MappedColumn:
     _kwargs = _kwargs or _Unset  # type:ignore
-    _marker = _MappedColumnMarker
+    _marker = _FieldMarker
+    if alias not in (_Unset, None) and not isinstance(alias, str):
+        raise TypeError('Invalid `alias` type. it should be `str`')
+    if validation_alias not in (_Unset, None) and not isinstance(validation_alias, str):
+        raise TypeError('Invalid `validation_alias` type. it should be `str`')
+    if serialization_alias not in (_Unset, None) and not isinstance(serialization_alias, str):
+        raise TypeError('Invalid `serialization_alias` type. it should be `str`')
+    if serialization_alias in (_Unset, None):
+        serialization_alias = alias
+    if validation_alias in (_Unset, None):
+        validation_alias = alias
     __rv = FieldInfo(**locals())
     __rv.metadata.append(_marker)
     return cast(_MappedColumn, __rv)
@@ -248,6 +267,16 @@ def Relationship(
 ) -> _Relationship[Any]:
     _kwargs = _kwargs or _Unset  # type:ignore
     _marker = _RelationshipMarker
+    if alias not in (_Unset, None) and not isinstance(alias, str):
+        raise TypeError('Invalid `alias` type. it should be `str`')
+    if validation_alias not in (_Unset, None) and not isinstance(validation_alias, str):
+        raise TypeError('Invalid `validation_alias` type. it should be `str`')
+    if serialization_alias not in (_Unset, None) and not isinstance(serialization_alias, str):
+        raise TypeError('Invalid `serialization_alias` type. it should be `str`')
+    if serialization_alias in (_Unset, None):
+        serialization_alias = alias
+    if validation_alias in (_Unset, None):
+        validation_alias = alias
     __rv = FieldInfo(**locals())
     __rv.metadata.append(_marker)
     return cast(_Relationship, __rv)
@@ -255,7 +284,7 @@ def Relationship(
 
 
 def generate_field_py() -> None:
-    imports = {}
+    imports: dict[str, set[str]] = {}
     sqlalchemy_field_args = get_function_args(
         mapped_column,
         ignored={"_NoArg"},
@@ -289,11 +318,11 @@ def generate_field_py() -> None:
     )
     pydantic_field_args = get_function_args(
         Field,
+        ignored={"AliasPath", "AliasChoices"},
         excluded=[
             "repr",  # dataclasses is not supported
             "kw_only",  # dataclasses is not supported
-            "validation_alias",  # too much aliases
-            "serialization_alias",  # too much aliases
+            "alias_priority",  # not supported
         ],
         overrides={
             "extra": "dict[str, Any]",
@@ -329,7 +358,9 @@ def generate_field_py() -> None:
         if "Callable" in imports["typing"]:
             imports["typing"].remove("Callable")
 
-    type_checking_imports = [f"from {imp} import {name}" for imp, names in imports.items() for name in names]
+    type_checking_imports = [
+        f"from {imp} import {name}" for imp, names in imports.items() for name in names
+    ]
 
     def indent(lines: list[str], spaces: int) -> str:
         return textwrap.indent("\n".join(lines), " " * spaces).strip()

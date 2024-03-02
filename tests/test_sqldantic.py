@@ -5,17 +5,19 @@ from sqlalchemy import String
 from sqlalchemy.orm import Mapped
 
 from sqldantic import Field, Relationship
-from sqldantic.field import _MappedColumnMarker, _RelationshipMarker
+from sqldantic.field import _FieldMarker, _RelationshipMarker
 
 
 def test_pydantic_meta_tricks() -> None:
-    X = Annotated[int, 1, Relationship(back_populates="foo"), Field(primary_key=True), Field(index=True)]
+    X = Annotated[
+        int, 1, Relationship(back_populates="foo"), Field(primary_key=True), Field(index=True)
+    ]
 
     class Model(BaseModel):
         a: X = Field(comment="foo")  # type:ignore
 
     field = Model.model_fields["a"]
-    assert _MappedColumnMarker in field.metadata
+    assert _FieldMarker in field.metadata
     assert _RelationshipMarker in field.metadata
     assert 1 in field.metadata
     assert field._attributes_set == {
@@ -24,7 +26,7 @@ def test_pydantic_meta_tricks() -> None:
         "index": True,
         "comment": "foo",
         "annotation": int,
-        "_marker": _MappedColumnMarker,
+        "_marker": _FieldMarker,
     }
 
 

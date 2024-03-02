@@ -1,4 +1,4 @@
-# auto-generated module (pydantic = "^2.6.1", sqlalchemy = "^2.0.25")
+# auto-generated module (pydantic = "^2.6.3", sqlalchemy = "^2.0.27")
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from sqlalchemy.orm import MappedColumn as _MappedColumn
 from sqlalchemy.orm import mapped_column, relationship
 from sqlalchemy.orm.relationships import Relationship as _Relationship
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from typing import Any, Collection, Literal
 
     from pydantic.fields import JsonDict
@@ -33,22 +33,24 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.base import SchemaEventTarget
     from sqlalchemy.sql.schema import SchemaConst
 
+__all__ = ("Field", "Relationship")
 
-class _Marker:
+
+class _Meta:
     __slots__ = ()
 
 
-class _MappedTypeMarker(_Marker):
-    __slots__ = ("type",)
+class _Origin(_Meta):
+    __slots__ = ("origin",)
 
-    def __init__(self, type_: Any):
-        self.type = type_
+    def __init__(self, origin: Any):
+        self.origin = origin
 
     def __repr__(self) -> str:
-        return f"Marker({self.type.__name__})"
+        return f"Marker({self.origin.__name__})"
 
 
-class _MappedMetaMarker(_Marker):
+class _Marker(_Meta):
     __slots__ = ()
     attributes: ClassVar[frozenset[str]]
     constructor: ClassVar[Callable]
@@ -65,7 +67,7 @@ class _MappedMetaMarker(_Marker):
         return f"Marker({self.constructor.__name__})"
 
 
-class __MappedColumnMarker(_MappedMetaMarker):
+class __FieldMarker(_Marker):
     __slots__ = ()
     attributes = frozenset(
         (
@@ -98,7 +100,7 @@ class __MappedColumnMarker(_MappedMetaMarker):
     constructor = mapped_column
 
 
-class __RelationshipMarker(_MappedMetaMarker):
+class __RelationshipMarker(_Marker):
     __slots__ = ()
     attributes = frozenset(
         (
@@ -138,7 +140,7 @@ class __RelationshipMarker(_MappedMetaMarker):
     constructor = relationship
 
 
-_MappedColumnMarker = __MappedColumnMarker()
+_FieldMarker = __FieldMarker()
 _RelationshipMarker = __RelationshipMarker()
 
 
@@ -170,7 +172,8 @@ def Field(
     default: Any | None = _Unset,
     default_factory: Callable[[], Any] | None = _Unset,
     alias: str | None = _Unset,
-    alias_priority: int | None = _Unset,
+    validation_alias: str | None = _Unset,
+    serialization_alias: str | None = _Unset,
     title: str | None = _Unset,
     description: str | None = _Unset,
     examples: list[Any] | None = _Unset,
@@ -198,7 +201,17 @@ def Field(
     **_kwargs: Any,
 ) -> _MappedColumn:
     _kwargs = _kwargs or _Unset  # type:ignore
-    _marker = _MappedColumnMarker
+    _marker = _FieldMarker
+    if alias not in (_Unset, None) and not isinstance(alias, str):
+        raise TypeError("Invalid `alias` type. it should be `str`")
+    if validation_alias not in (_Unset, None) and not isinstance(validation_alias, str):
+        raise TypeError("Invalid `validation_alias` type. it should be `str`")
+    if serialization_alias not in (_Unset, None) and not isinstance(serialization_alias, str):
+        raise TypeError("Invalid `serialization_alias` type. it should be `str`")
+    if serialization_alias in (_Unset, None):
+        serialization_alias = alias
+    if validation_alias in (_Unset, None):
+        validation_alias = alias
     __rv = FieldInfo(**locals())
     __rv.metadata.append(_marker)
     return cast(_MappedColumn, __rv)
@@ -239,7 +252,8 @@ def Relationship(
     default: Any | None = _Unset,
     default_factory: Callable[[], Any] | None = _Unset,
     alias: str | None = _Unset,
-    alias_priority: int | None = _Unset,
+    validation_alias: str | None = _Unset,
+    serialization_alias: str | None = _Unset,
     title: str | None = _Unset,
     description: str | None = _Unset,
     examples: list[Any] | None = _Unset,
@@ -268,6 +282,16 @@ def Relationship(
 ) -> _Relationship[Any]:
     _kwargs = _kwargs or _Unset  # type:ignore
     _marker = _RelationshipMarker
+    if alias not in (_Unset, None) and not isinstance(alias, str):
+        raise TypeError("Invalid `alias` type. it should be `str`")
+    if validation_alias not in (_Unset, None) and not isinstance(validation_alias, str):
+        raise TypeError("Invalid `validation_alias` type. it should be `str`")
+    if serialization_alias not in (_Unset, None) and not isinstance(serialization_alias, str):
+        raise TypeError("Invalid `serialization_alias` type. it should be `str`")
+    if serialization_alias in (_Unset, None):
+        serialization_alias = alias
+    if validation_alias in (_Unset, None):
+        validation_alias = alias
     __rv = FieldInfo(**locals())
     __rv.metadata.append(_marker)
     return cast(_Relationship, __rv)

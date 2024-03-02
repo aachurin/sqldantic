@@ -2,6 +2,20 @@ import ipaddress
 
 from .sqltypes import InetType
 
+# default type mapping:
+# bool: types.Boolean(), -- ok
+# bytes: types.LargeBinary(), -- ok
+# datetime.date: types.Date(), -- ok
+# datetime.datetime: types.DateTime(),  -- ok
+# datetime.time: types.Time(), -- ok
+# datetime.timedelta: types.Interval(), -- ok
+# float: types.Float(), -- ok
+# int: types.Integer(), -- ok
+# str: types.String(), -- mmm?
+# decimal.Decimal: types.Numeric(), ???
+# uuid.UUID: types.Uuid(), -- ???
+# }
+
 DEFAULT_TYPE_MAP = {
     ipaddress.IPv4Address: InetType(ipaddress.IPv4Address),
     ipaddress.IPv6Address: InetType(ipaddress.IPv6Address),

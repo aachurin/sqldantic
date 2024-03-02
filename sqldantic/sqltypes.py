@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
 
 from pydantic import RootModel
-from sqlalchemy import TypeDecorator, func
-from sqlalchemy.dialects.postgresql import INET
+from sqlalchemy import String, TypeDecorator, func
+from sqlalchemy.dialects.postgresql import CIDR, INET
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.functions import GenericFunction
 from sqlalchemy.sql.type_api import to_instance
@@ -40,7 +40,9 @@ class Typed(PostponedAnnotation, TypeDecorator):
         ann_type: type[Any] | None = None,
         **kwargs: Any,
     ):
-        assert root_model is None or ann_type is None, "`root_model` and `annotation` are mutually exclusive"
+        assert (
+            root_model is None or ann_type is None
+        ), "`root_model` and `annotation` are mutually exclusive"
         assert (
             root_model is None or isinstance(root_model, type) and issubclass(root_model, RootModel)
         ), "type[RootModel] expected"
@@ -86,14 +88,56 @@ class InetType(TypeDecorator):
 
     def load_dialect_impl(self, dialect: Dialect) -> Any:
         if dialect.name == "postgresql":
+            # psycopg3 (aka psycopg) can work with ipaddress types from the box
             return dialect.type_descriptor(INET())
-        return dialect.type_descriptor(Typed(ann_type=self.type_))
+        return dialect.type_descriptor(Typed(String(), ann_type=self.type_))
 
     class Comparator(TypeEngine.Comparator[_T]):
         def is_contained_within(self, other: Any) -> Any:
             return func._inet__is_contained_within(self, other)
 
         def __rshift__(self, other: Any) -> Any:
+            return func._inet__is_contained_within(self, other)
+
+    comparator_factory = Comparator
+
+
+class CidrContains(GenericFunction):
+    inherit_cache = True
+    name = "_cidr__contains"
+    type = Boolean()
+
+
+@compiles(CidrContains, "postgresql")  # type: ignore[no-redef]
+def __(element: Any, compiler: Any, **kw: Any) -> str:
+    left, right = element.clauses
+    return f"{compiler.process(left, **kw)} >>= {compiler.process(right, **kw)}"
+
+
+class CidrType(TypeDecorator):
+    impl = CIDR
+    cache_ok = True
+
+    def __init__(self, type_: Any):
+        super().__init__()
+        self.type_ = type_
+
+    def load_dialect_impl(self, dialect: Dialect) -> Any:
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(CIDR())
+        return dialect.type_descriptor(Typed(String(), ann_type=self.type_))
+
+    class Comparator(TypeEngine.Comparator[_T]):
+        def is_contained_within(self, other: Any) -> Any:
+            return func._inet__is_contained_within(self, other)
+
+        def __rshift__(self, other: Any) -> Any:
+            return func._inet__is_contained_within(self, other)
+
+        def contains(self, other: Any) -> Any:
+            return func._inet__is_contained_within(self, other)
+
+        def __lshift__(self, other: Any) -> Any:
             return func._inet__is_contained_within(self, other)
 
     comparator_factory = Comparator

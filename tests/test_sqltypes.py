@@ -1,8 +1,12 @@
-from ipaddress import IPv4Address
+from ipaddress import IPv4Address, IPv4Network
+from typing import Annotated
 
+from sqlalchemy import select
 from sqlalchemy.orm import Mapped, Session
 
 from sqldantic import Field
+
+X = Annotated[int, 123]
 
 
 def test_ipv4address(Base, engine) -> None:
@@ -22,3 +26,7 @@ def test_ipv4address(Base, engine) -> None:
         session.refresh(host2)
         assert host1.addr == IPv4Address("192.168.1.1")
         assert host2.addr == IPv4Address("192.168.1.2")
+
+    with Session(engine) as session:
+        hosts = session.execute(select(Host)).scalars().all()
+        print(hosts)

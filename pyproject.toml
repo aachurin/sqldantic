@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "sqldantic"
-version = "0.1.1"
+version = "0.1.2"
 description = "sqlalchemy and pydantic integration."
 authors = ["Andrey Churin <aachurin@gmail.com>"]
 readme = "README.md"
@@ -26,40 +26,35 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-pydantic = "^2.6.1"
-sqlalchemy = "^2.0.25"
+pydantic = "^2.6.3"
+sqlalchemy = "^2.0.26"
 
-[tool.poetry.dev-dependencies]
-black = "^24.1.0"
+[tool.poetry.group.dev.dependencies]
+black = "^24.2.0"
 mypy = "^1.8.0"
 isort = "^5.13.2"
-autoflake = "^2.2.1"
-flake8 = "^7.0.0"
-flake8-pyproject = "^1.2.3"
-pytest = "^8.0.0"
-setuptools = "^69.0.3"
+ipython = "^8.22.1"
 
-[tool.flake8]
-max-line-length = 119
-exclude = [
-    ".git",
-    "__pycache__",
-    "__init__.py",
-    ".mypy_cache",
-    ".pytest_cache"
-]
+[tool.poetry.group.test.dependencies]
+pytest = "^8.0.2"
+pytest-cov = "^4.1.0"
+psycopg = {extras = ["binary"], version = "^3.1.18"}
 
 [tool.black]
-line-length = 119
-target-version = ['py311']
-
-[tool.isort]
-profile = "black"
-line_length = 119
+line-length = 104
 
 [tool.mypy]
 disallow_untyped_defs = true
 ignore_missing_imports = true
+exclude = [
+    "^tests/.*",
+    "^alembic/.*"
+]
+
+[tool.isort]
+profile = "black"
+skip_glob = ["alembic/*"]
+line_length = 104
 
 [build-system]
 requires = ["poetry-core"]
