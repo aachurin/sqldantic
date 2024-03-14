@@ -1,172 +1,298 @@
-import enum
-import ipaddress
+import decimal
+import pathlib
+import sys
+import typing
+from typing import Annotated, NewType
 
-from pydantic import BaseModel
-from sqlalchemy import JSON, ForeignKey, String, select
-from sqlalchemy.orm import Mapped, Session
+import pytest
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import Integer, Numeric, String, inspect
+from sqlalchemy.orm import Mapped
 
-from sqldantic import Field, Relationship, Typed
+from sqldantic import DeclarativeBase, Field, Relationship, Typed
+from sqldantic.field import _FieldMarker, _RelationshipMarker
+from sqldantic.orm import Registry
+from sqldantic.sqltypes import _SpecialTyped
 
 
-def test_mixed_mapping(Base, engine) -> None:
+def test_pydantic_meta_tricks() -> None:
+    X = Annotated[
+        int, 1, Relationship(back_populates="foo"), Field(primary_key=True), Field(index=True)
+    ]
+
+    class Model(BaseModel):
+        a: X = Field(comment="foo")  # type:ignore
+
+    field = Model.model_fields["a"]
+    assert _FieldMarker in field.metadata
+    assert _RelationshipMarker in field.metadata
+    assert 1 in field.metadata
+    assert field._attributes_set == {
+        "back_populates": "foo",
+        "primary_key": True,
+        "index": True,
+        "comment": "foo",
+        "annotation": int,
+        "_marker": _FieldMarker,
+    }
+
+
+def test_pydantic_namespace(Base) -> None:
+    LOCAL_VAR = "LOCAL_VAR"  # noqa
+
+    class Model1(Base, table=True):
+        id: Mapped[int] = Field(primary_key=True)
+        model2: "Mapped[Model2]" = Field(String())
+
+    class Model2(Base, table=True):
+        id: Mapped[int] = Field(primary_key=True)
+        model1: "Mapped[Model1]" = Field(String())
+
+    assert "LOCAL_VAR" in Model1.__pydantic_parent_namespace__  # type:ignore
+    assert Model1 in Base.__sqldantic_incomplete_models__  # type:ignore
+
+    Base.update_incomplete_models()
+
+    assert len(Base.__sqldantic_incomplete_models__) == 0  # type:ignore
+
+
+def test_module_level_models() -> None:
+    from .models import Base
+
+    assert len(Base.__sqldantic_incomplete_models__) == 0  # type:ignore
+
+
+def test_generic_types(Base):
+    # class NewInt(int):
+    #     pass
+
+    print()
+
+    class Table(Base, table=True):
+        id: int = Field(primary_key=True)
+        int_: int
+        # newint_: NewInt
+
+    columns = inspect(Table).columns
+    for k, v in columns.items():
+        print(k, v.type)
+
+    # assert type(columns["x"].type) == Numeric
+    # assert (
+    #         type(columns["y"].type) == Numeric
+    #         and columns["y"].type.precision == 4
+    #         and columns["y"].type.scale == 2
+    # )
+    # assert (
+    #         type(columns["z"].type) == Numeric
+    #         and columns["y"].type.precision == 4
+    #         and columns["y"].type.scale == 2
+    # )
+
+
+def test_validate_assignment() -> None:
+    class Base(DeclarativeBase):
+        model_config = {"validate_assignment": True}
+
+    class Foo(BaseModel):
+        a: int
+        b: int
+
+    class Model(Base, table=True):
+        id: Mapped[int] = Field(primary_key=True)
+        foo: Foo
+
+    x = Model()
+    x.foo = {"a": 1, "b": 2}
+    assert isinstance(x.foo, Foo)
+    with pytest.raises(
+        ValidationError, match=r".*Input should be a valid dictionary or instance of Foo.*"
+    ):
+        x.foo = 42
+
+
+def test_allow_extra() -> None:
+    class Base(DeclarativeBase):
+        model_config = {"extra": "allow"}
+
+    class Model(Base, table=True):
+        id: Mapped[int] = Field(primary_key=True)
+
+    x = Model(extra=42)
+    assert "extra" in x.__pydantic_extra__
+    x.foo = 1
+    assert "foo" in x.__pydantic_extra__
+    del x.extra
+    del x.foo
+    assert x.__pydantic_extra__ == {}
+
+    class Model2(Base, table=True):
+        id: Mapped[int] = Field(primary_key=True)
+        _private: int = 2
+
+    assert Model2()._private == 2
+
+
+def test_not_table(Base) -> None:
+    class Hero(Base):
+        id: Mapped[int] = Field(primary_key=True)
+
+    Hero(id=1)
+
+
+def test_private_attributes(Base) -> None:
     class Hero(Base, table=True):
-        id: Mapped[int] = Field(default=None, primary_key=True)
-        name: str
-        secret_name: str
-        age: int | None = None
+        id: Mapped[int] = Field(primary_key=True)
+        _private: int
 
-    hero_1 = Hero(name="Deadpond", secret_name="Dive Wilson")
-    hero_2 = Hero(name="Deadpond", secret_name="Dive Wilson")
+    with pytest.raises(ValueError, match=r".* has no field .*"):
+        Hero(name="Skywalker")
 
-    Base.metadata.create_all(engine)
+    h = Hero(_private=123)
+    with pytest.raises(AttributeError):
+        h._private
 
-    with Session(engine) as session:
-        session.add(hero_1)
-        session.commit()
-        session.refresh(hero_1)
-
-    with Session(engine) as session:
-        session.add(hero_2)
-        session.commit()
-        session.refresh(hero_2)
-
-    with Session(engine) as session:
-        heroes = session.execute(select(Hero)).scalars().all()
-        assert len(heroes) == 2
-        assert heroes[0].name == heroes[1].name
+    h._private = 222
+    assert h.model_dump() == {}
 
 
-def test_relationship(Base, engine) -> None:
-
-    class Parent(Base, table=True):
+def test_set_del_attr(Base) -> None:
+    class Hero(Base, table=True):
         id: Mapped[int] = Field(primary_key=True)
         name: Mapped[str]
-        children: Mapped[list["Child"]] = Relationship(back_populates="parent")
 
-    class Child(Base, table=True):
+    h = Hero(name="Skywalker")
+
+    h.name = "Darth Vader"
+    del h.name
+
+
+def test_set_del_attr_non_table(Base) -> None:
+    class Hero(Base):
         id: Mapped[int] = Field(primary_key=True)
         name: Mapped[str]
-        parent_id: Mapped[int] = Field(ForeignKey("parent.id"))
-        parent: Mapped[Parent] = Relationship(back_populates="children")
 
-    # need in function only
-    Base.update_incomplete_models()
-
-    parent1 = Parent(name="Parent1")
-    child1 = Child(name="Child1", parent=parent1)
-    child2 = Child(name="Child2", parent=parent1)
-
-    Base.metadata.create_all(engine)
-
-    with Session(engine) as session:
-        session.add(child1)
-        session.add(child2)
-        session.commit()
-        session.refresh(child1)
-        session.refresh(child2)
-        assert child1.parent and child1.parent.name == "Parent1"
-        assert child2.parent and child2.parent.name == "Parent1"
-        parents = session.execute(select(Parent)).scalars().all()
-        assert parents and parents[0].name == "Parent1"
-        assert ["Child1", "Child2"] == [x.name for x in parents[0].children]
+    h = Hero(id=42, name="Skywalker")
+    h.name = "Darth Vader"
+    del h.name
 
 
-def test_typed(Base, engine) -> None:
-    class Kind(str, enum.Enum):
-        postgres = "postgres"
-        oracle = "oracle"
-        mysql = "mysql"
-
-    class Info(BaseModel):
-        name: str
-        kind: Kind
-        tags: set[str]
-
-    class Database(Base, table=True):
+def test_aliases(Base) -> None:
+    class Hero(Base, table=True):
         id: Mapped[int] = Field(primary_key=True)
-        info: Mapped[Info] = Field(Typed())
-        address: Mapped[ipaddress.IPv4Address] = Field(Typed(String()))
+        name: Mapped[str] = Field(alias="title")
 
-    info = Info(
-        name="mydb",
-        kind=Kind.postgres,
-        tags={"pg15", "pg16"},
+    Hero(id=1, title="asd")
+
+
+def test_field_aliases() -> None:
+    with pytest.raises(TypeError, match=r".* should be `str`.*"):
+        Field(alias=1)
+    with pytest.raises(TypeError, match=r".* should be `str`.*"):
+        Field(validation_alias=1)
+    with pytest.raises(TypeError, match=r".* should be `str`.*"):
+        Field(serialization_alias=1)
+    with pytest.raises(TypeError, match=r".* should be `str`.*"):
+        Relationship(alias=1)
+    with pytest.raises(TypeError, match=r".* should be `str`.*"):
+        Relationship(validation_alias=1)
+    with pytest.raises(TypeError, match=r".* should be `str`.*"):
+        Relationship(serialization_alias=1)
+
+
+def test_registry_resolver() -> None:
+    registry = Registry()
+    assert registry._resolve_type(object) is None
+    assert type(registry._resolve_type(int)) == Integer
+    assert type(registry._resolve_type(Annotated[int, 1])) == Integer
+    assert type(registry._resolve_type(NewType("int", int))) == Integer
+    assert type(registry._resolve_type(list[str])) == _SpecialTyped
+    assert type(registry._resolve_type(Annotated[str, 1] | Annotated[str, 2])) == String
+    assert type(registry._resolve_type(str | int)) == _SpecialTyped
+    assert type(registry._resolve_type(str | dict[str, int])) == _SpecialTyped
+    assert type(registry._resolve_type(typing.List)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.List[str])) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Tuple)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Tuple[str, ...])) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Deque)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Deque[str])) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Set)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Set[str])) == _SpecialTyped
+    assert type(registry._resolve_type(typing.FrozenSet)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.FrozenSet[str])) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Dict)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Dict[str, str])) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Any)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.MutableSet)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.MutableSet[str])) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Mapping)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Mapping[str, str])) == _SpecialTyped
+    assert type(registry._resolve_type(typing.MutableMapping)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.MutableMapping[str, str])) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Sequence)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.Sequence[str])) == _SpecialTyped
+    assert type(registry._resolve_type(typing.MutableSequence)) == _SpecialTyped
+    assert type(registry._resolve_type(typing.MutableSequence[str])) == _SpecialTyped
+    assert (
+        type(r := registry._resolve_type(pathlib.Path | typing.Pattern)) == _SpecialTyped
+        and type(r.impl) == String
     )
 
-    db1 = Database(
-        info=info,
-        address="192.168.1.2",
+    class NT(typing.NamedTuple):
+        x: int
+        y: int
+
+    assert type(registry._resolve_type(NT)) == _SpecialTyped
+
+    class TD(typing.TypedDict):
+        x: int
+        y: int
+
+    assert type(registry._resolve_type(TD)) == _SpecialTyped
+
+    if sys.version_info >= (3, 12):
+        globalns = {}
+        exec(
+            "type N = N\n"
+            "type NN = N | NN\n"
+            "type X = int | X\n"
+            "type Y = int | Z\n"
+            "type Z = int | Y\n"
+            "type ZZ = Z\n",
+            globalns,
+        )
+        N, NN, X, Y, Z, ZZ = (
+            globalns["N"],
+            globalns["NN"],
+            globalns["X"],
+            globalns["Y"],
+            globalns["Z"],
+            globalns["ZZ"],
+        )
+        assert registry._resolve_type(N) is None
+        assert registry._resolve_type(NN) is None
+        assert type(registry._resolve_type(X)) == Integer
+        assert type(registry._resolve_type(Y)) == Integer
+        assert type(registry._resolve_type(Z)) == Integer
+        assert type(registry._resolve_type(ZZ)) == Integer
+
+
+def test_decimal_type(Base):
+    class Table(Base, table=True):
+        id: int = Field(primary_key=True)
+        x: decimal.Decimal
+        y: decimal.Decimal = Field(max_digits=4, decimal_places=2)
+        z: Annotated[decimal.Decimal, Field(max_digits=4, decimal_places=2)]
+
+    columns = inspect(Table).columns
+    assert type(columns["x"].type) == Numeric
+    assert (
+        type(columns["y"].type) == Numeric
+        and columns["y"].type.precision == 4
+        and columns["y"].type.scale == 2
     )
-
-    Base.metadata.create_all(engine)
-
-    with Session(engine) as session:
-        session.add(db1)
-        session.commit()
-        session.refresh(db1)
-
-    assert db1.info is not info
-    assert db1.info == info
-    assert db1.address == ipaddress.IPv4Address("192.168.1.2")
-
-
-def test_example(Base, engine) -> None:
-    class OS(str, enum.Enum):
-        linux = "linux"
-        windows = "windows"
-        macos = "macos"
-
-    class Info(BaseModel):
-        os: OS
-        tags: set[str]
-
-    class ClusterBase(Base):
-        name: Mapped[str]
-        hosts: Mapped[list["Host"]] = Relationship(back_populates="cluster")
-
-    class Cluster(ClusterBase, table=True):
-        id: Mapped[int] = Field(primary_key=True)
-
-    class HostBase(Base):
-        hostname: Mapped[str] = Field(index=True)
-        address: Mapped[ipaddress.IPv4Address] = Field(Typed(String))
-        info: Mapped[Info] = Field(Typed(JSON))
-        cluster: Mapped[Cluster] = Relationship(back_populates="hosts")
-
-    class Host(HostBase, table=True):
-        id: Mapped[int] = Field(primary_key=True)
-        cluster_id: Mapped[int] = Field(ForeignKey("cluster.id"))
-
-    # need in function only
-    Base.update_incomplete_models()
-
-    Base.metadata.create_all(engine)
-
-    cluster = Cluster(name="demo")
-    info1 = Info(os=OS.linux, tags={"ubuntu", "ubuntu23"})
-    host1 = Host(
-        hostname="server1",
-        cluster=cluster,
-        address=ipaddress.IPv4Address("192.168.1.2"),
-        info=info1,
+    assert (
+        type(columns["z"].type) == Numeric
+        and columns["y"].type.precision == 4
+        and columns["y"].type.scale == 2
     )
-    info2 = Info(os=OS.macos, tags={"macosx", "macosx14"})
-    host2 = Host(
-        hostname="server2",
-        cluster=cluster,
-        address=ipaddress.IPv4Address("192.168.1.3"),
-        info=info2,
-    )
-
-    with Session(engine) as session:
-        session.add(host1)
-        session.add(host2)
-        session.commit()
-        hosts = session.execute(select(Host)).scalars().all()
-        assert len(hosts) == 2
-        assert hosts[0].cluster.name == "demo"
-        assert hosts[1].cluster.name == "demo"
-        assert hosts[0].address == ipaddress.IPv4Address("192.168.1.2")
-        assert hosts[1].address == ipaddress.IPv4Address("192.168.1.3")
-        assert hosts[0].info == info1
-        assert hosts[1].info == info2

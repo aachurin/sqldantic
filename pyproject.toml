@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "sqldantic"
-version = "0.1.2"
+version = "0.2.0"
 description = "sqlalchemy and pydantic integration."
 authors = ["Andrey Churin <aachurin@gmail.com>"]
 readme = "README.md"

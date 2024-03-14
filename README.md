@@ -9,15 +9,26 @@ import enum
 import ipaddress 
 
 from pydantic import BaseModel
-from sqlalchemy import String, ForeignKey
+from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped
-from sqlalchemy.dialects.postgresql import JSONB
-from sqldantic import DeclarativeBase, Field, Relationship, Typed
+from sqldantic import DeclarativeBase, Field, Relationship
 
 
 class Base(DeclarativeBase):
-    # see https://docs.sqlalchemy.org/en/20/orm/declarative_styles.html
-    pass
+    """
+    allowed options are:
+        metadata
+        type_annotation_map
+        json_type
+        model_config
+    
+    see https://docs.sqlalchemy.org/en/20/orm/declarative_styles.html
+    for more information on `metadata` and `type_annotation_map`
+    see https://docs.pydantic.dev/latest/api/config/#pydantic.config.ConfigDict
+    for more information on `model_config`
+    
+    `json_type` is JSON by default, but you can change it to JSONB 
+    """
 
 
 class OS(str, enum.Enum):
@@ -42,8 +53,8 @@ class Cluster(ClusterBase, table=True):
 
 class HostBase(Base):
     hostname: Mapped[str] = Field(index=True)
-    address: Mapped[ipaddress.IPv4Address] = Field(Typed(String()))
-    info: Mapped[Info] = Field(Typed(JSONB))
+    address: Mapped[ipaddress.IPv4Address]
+    info: Mapped[Info]
     cluster: Mapped[Cluster] = Relationship(back_populates="hosts")
     
     
@@ -61,26 +72,3 @@ Any subclass of `DeclarativeBase` with `table=True` is Sqlalchemy Model.
 Both `Mapped[...]` and "unmapped" formats are supported, but Sqlalchemy needs `Mapped` for mypy type checking, 
 so `Mapped` is preferred. 
 
-Sometimes it's impossible to use generic Sqlalchemy types:
-
-```python
-class Foo(Base, table=True):
-    ...
-    address: Mapped[ipaddress.IPv4Address]
-    info: Mapped[Info]
-    ...
-```
-
-Both `address` and `info` are not supported by Sqlalchemy. 
-
-In such case, you can use special `Typed` type, which can handle any pydantic-supported types:
-
-```python
-class Foo(Base, table=True):
-    ...
-    address: Mapped[ipaddress.IPv4Address] = Field(Typed(String))
-    # means validate value as an IPv4Address object, but store it as a String
-    info: Mapped[Info] = Field(Typed(JSONB))
-    # means validate value as an Info object, but store it as a JSONB
-    ...
-```

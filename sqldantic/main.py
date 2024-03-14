@@ -6,20 +6,18 @@ from typing import TYPE_CHECKING, Any, Callable, cast
 from pydantic import BaseModel, ConfigDict
 from pydantic._internal._model_construction import ModelMetaclass
 from pydantic.fields import FieldInfo
-from sqlalchemy import inspect
 from sqlalchemy.orm import MappedColumn, declared_attr, instrumentation
-from sqlalchemy.orm import registry as Registry
 from sqlalchemy.orm.base import DEFAULT_STATE_ATTR
 from sqlalchemy.orm.decl_api import DeclarativeMeta
 from sqlalchemy.orm.relationships import Relationship as SQLARelationship
 
 from . import typing_extra
-from .field import Field, Relationship, _Marker
-from .sqltypes import PostponedAnnotation
-from .typemap import DEFAULT_TYPE_MAP
+from .field import Field, Relationship, _FieldMarker, _Marker
+from .orm import Registry
 
 if TYPE_CHECKING:  # pragma: no cover
     from sqlalchemy.orm.decl_api import _TypeAnnotationMapType
+    from sqlalchemy.types import TypeEngine
 
 __all__ = ("Field", "Relationship", "DeclarativeBase")
 
@@ -61,6 +59,7 @@ class SQLModelMetaclass(ModelMetaclass, DeclarativeMeta):
             config = {
                 "metadata": namespace.pop("metadata", None),
                 "type_annotation_map": namespace.pop("type_annotation_map", None),
+                "json_type": namespace.pop("json_type", None),
             }
             for key in namespace:
                 if key in ("__module__", "__qualname__", "model_config"):
@@ -92,7 +91,6 @@ class SQLModelMetaclass(ModelMetaclass, DeclarativeMeta):
         cls = super().__new__(mcs, cls_name, bases, namespace, **kwargs)
 
         if table:
-            cls._init_values = _compile_init_values(cls)  # type:ignore
             config = getattr(cls, "model_config")
             config["table"] = True
             config["read_with_orm_mode"] = True
@@ -107,7 +105,7 @@ class SQLModelMetaclass(ModelMetaclass, DeclarativeMeta):
         if not getattr(cls, "__pydantic_complete__", False):
             getattr(cls, "__sqldantic_incomplete_models__").add(cls)
         else:
-            _complete_model_init(cast(type[BaseModel], cls), parent_depth=1)
+            _complete_model_init(cast(type[DeclarativeBase], cls), parent_depth=1)
 
 
 def _populate_model_to_parent_namespace(cls: type[Any], *, parent_depth: int) -> bool:
@@ -132,7 +130,7 @@ def _update_incomplete_models(
             cls.model_rebuild(raise_errors=raise_errors, _parent_namespace_depth=parent_depth)
 
 
-def _complete_model_init(cls: type[BaseModel], *, parent_depth: int) -> None:
+def _complete_model_init(cls: type[DeclarativeBase], *, parent_depth: int) -> None:
     incomplete_models = getattr(cls, "__sqldantic_incomplete_models__", None)
     if incomplete_models and cls in incomplete_models:
         incomplete_models.remove(cls)
@@ -144,28 +142,24 @@ def _complete_model_init(cls: type[BaseModel], *, parent_depth: int) -> None:
             break
 
     if getattr(cls, "__sqldantic_table__", False):
-        cls.__generic_new__ = _declarative_base_table__new__
+        if cls.model_config.get("extra") == "allow":
+            cls.__generic_new__ = _declarative_base_table__new__extra
+        else:
+            cls.__generic_new__ = _declarative_base_table__new__
         cls.__generic_init__ = _declarative_base_table__init__
         if cls.model_config.get("validate_assignment"):
             cls.__generic_setattr__ = _declarative_base_table__setattr__validate
         else:
             cls.__generic_setattr__ = _declarative_base_table__setattr__
         cls.__generic_delattr__ = _declarative_base_table__delattr__
+        cls.__init_values__ = _compile_init_values(cls)  # type:ignore
 
         annotations: dict[str, Any] = {}
         for key, field in cls.model_fields.items():
-            annotations[key], default = _mapped_column_from_field(cls.__name__, key, field)
-            if default is not None:
-                setattr(cls, key, default)
-
+            annotations[key], default = _mapped_column_from_field(cls, key, field)
+            setattr(cls, key, default)
         cls.__annotations__ = annotations
         DeclarativeMeta.__init__(cast(DeclarativeMeta, cls), cls.__name__, cls.__bases__, {})
-
-        for column in inspect(cls).columns:
-            if isinstance(column.type, PostponedAnnotation):
-                column.type.provide_annotation(
-                    typing_extra.annotation_from_field(cls.model_fields[column.key])
-                )
 
 
 def _setup_declarative_base(
@@ -173,11 +167,14 @@ def _setup_declarative_base(
     *,
     metadata: Any,
     type_annotation_map: _TypeAnnotationMapType | None,
+    json_type: type[TypeEngine[Any]] | TypeEngine[Any] | None = None,
 ) -> None:
-    default_type_map = {**DEFAULT_TYPE_MAP}
-    if type_annotation_map:
-        default_type_map.update(type_annotation_map)
-    registry = Registry(metadata=metadata, type_annotation_map=default_type_map)
+
+    registry = Registry(
+        metadata=metadata,
+        type_annotation_map=type_annotation_map,
+        json_type=json_type,
+    )
     _check_registry_type_annotation_map(cls, registry)
 
     setattr(cls, "_sa_registry", registry)
@@ -255,10 +252,11 @@ def _compile_init_values(cls: BaseModel) -> Any:
 
     globals_ = {"set_attribute": set_attribute}
     code = [
-        "def _init_values(self, values):",
+        "def __init_values__(self, values):",
         "  va = self.__pydantic_validator__.validate_assignment",
         "  sa = set_attribute",
         "  mf = self.model_fields",
+        "  dd = {}",
         "  rd = {}",
     ]
     for name, field in cls.model_fields.items():
@@ -266,13 +264,13 @@ def _compile_init_values(cls: BaseModel) -> Any:
             code += [
                 f"  if {field.validation_alias!r} in values:",
                 # set new dict for speedup (validate_assignment always create new __dict__)
-                r"    self.__dict__ = {}",
+                r"    self.__dict__ = dd",
                 f"    va(self, {name!r}, values.pop({field.validation_alias!r}))",
                 f"    rd[{name!r}] = self.__dict__[{name!r}]",
             ]
         code += [
             f"  {'elif' if field.validation_alias else 'if'} {name!r} in values:",
-            r"    self.__dict__ = {}",
+            r"    self.__dict__ = dd",
             f"    va(self, {name!r}, values.pop({name!r}))",
             f"    rd[{name!r}] = self.__dict__[{name!r}]",
         ]
@@ -282,15 +280,17 @@ def _compile_init_values(cls: BaseModel) -> Any:
                 f"    rd[{name!r}] = mf[{name!r}].get_default(call_default_factory=True)",
             ]
     code += [
-        "  self.__dict__ = {}",
+        "  self.__dict__ = dd",
         "  for key, value in rd.items():",
         "    sa(self, key, value)",
     ]
     exec("\n".join(code), globals_, globals_)
-    return globals_["_init_values"]
+    return globals_["__init_values__"]
 
 
-def _get_declarative_base_table_methods() -> tuple[Callable, Callable, Callable, Callable, Callable]:
+def _get_declarative_base_table_methods() -> (
+    tuple[Callable, Callable, Callable, Callable, Callable, Callable]
+):
     from sqlalchemy.orm.attributes import del_attribute, set_attribute
 
     basemodel_setattr = BaseModel.__setattr__
@@ -302,8 +302,21 @@ def _get_declarative_base_table_methods() -> tuple[Callable, Callable, Callable,
         self = object_new(cls)
         # sqlalchemy not uses __init__
         # so, need initialize pydantic state here
-        extra: dict[str, Any] | None = {} if self.model_config.get("extra") == "allow" else None
-        object_setattr(self, "__pydantic_extra__", extra)
+        object_setattr(self, "__pydantic_extra__", None)
+        object_setattr(self, "__pydantic_fields_set__", set())
+        if cls.__pydantic_post_init__:
+            self.model_post_init(None)
+        else:
+            # Note: if there are any private attributes, cls.__pydantic_post_init__ would exist
+            # Since it doesn't, that means that `__pydantic_private__` should be set to None
+            object_setattr(self, "__pydantic_private__", None)
+        return self
+
+    def table__new__extra(cls: type[DeclarativeBase], *_args: Any, **_kwargs: Any) -> Any:
+        self = object_new(cls)
+        # sqlalchemy not uses __init__
+        # so, need initialize pydantic state here
+        object_setattr(self, "__pydantic_extra__", {})
         object_setattr(self, "__pydantic_fields_set__", set())
         if cls.__pydantic_post_init__:
             self.model_post_init(None)
@@ -314,7 +327,7 @@ def _get_declarative_base_table_methods() -> tuple[Callable, Callable, Callable,
         return self
 
     def table__init__(self: DeclarativeBase, **values: dict[str, Any]) -> None:
-        self._init_values(values)
+        self.__init_values__(values)
         if values:
             if private_attributes := self.__private_attributes__:
                 # private attributes is already initialized in `table_new`
@@ -326,7 +339,7 @@ def _get_declarative_base_table_methods() -> tuple[Callable, Callable, Callable,
                     basemodel_setattr(self, k, v)
 
     def table__setattr__(self: DeclarativeBase, name: str, value: Any) -> None:
-        if name in self.model_fields:  # type:ignore
+        if name in self.model_fields:
             # Set in Pydantic model to trigger possible validation changes
             self.__pydantic_fields_set__.add(name)
             # Set in Sqlalchemy model to trigger events and updates
@@ -335,7 +348,7 @@ def _get_declarative_base_table_methods() -> tuple[Callable, Callable, Callable,
             basemodel_setattr(self, name, value)
 
     def table__setattr__validate(self: DeclarativeBase, name: str, value: Any) -> None:
-        if name in self.model_fields:  # type:ignore
+        if name in self.model_fields:
             # Set in Pydantic model to trigger possible validation changes
             current_dict = self.__dict__
             self.__dict__ = {}
@@ -348,16 +361,24 @@ def _get_declarative_base_table_methods() -> tuple[Callable, Callable, Callable,
             basemodel_setattr(self, name, value)
 
     def table__delattr__(self: DeclarativeBase, name: str) -> None:
-        if name in self.model_fields:  # type:ignore
+        if name in self.model_fields:
             del_attribute(self, name)
         else:
             basemodel_delattr(self, name)
 
-    return table__new__, table__init__, table__setattr__, table__setattr__validate, table__delattr__
+    return (
+        table__new__,
+        table__new__extra,
+        table__init__,
+        table__setattr__,
+        table__setattr__validate,
+        table__delattr__,
+    )
 
 
 (
     _declarative_base_table__new__,
+    _declarative_base_table__new__extra,
     _declarative_base_table__init__,
     _declarative_base_table__setattr__,
     _declarative_base_table__setattr__validate,
@@ -366,35 +387,35 @@ def _get_declarative_base_table_methods() -> tuple[Callable, Callable, Callable,
 
 
 def _mapped_column_from_field(
-    cls_name: str,
+    cls: type[DeclarativeBase],
     key: str,
     field: FieldInfo,
 ) -> tuple[Any, MappedColumn | SQLARelationship | None]:
-    marker = field._attributes_set.get("_marker")
-    assert marker is None or isinstance(marker, _Marker)
+    marker = field._attributes_set.get("_marker") or _FieldMarker
+    assert isinstance(marker, _Marker)
 
     for meta in field.metadata:
         if isinstance(meta, MappedColumn):
             raise TypeError(
-                f"Type annotation for `{cls_name}.{key}` can't be correctly interpreted:\n"
+                f"Type annotation for `{cls.__name__}.{key}` can't be correctly interpreted:\n"
                 f"Use `sqldantic.Field` instead of `sqlalchemy.orm.mapped_column` "
                 "inside Annotated types."
             )
         if isinstance(meta, SQLARelationship):
             raise TypeError(
-                f"Type annotation for `{cls_name}.{key}` can't be correctly interpreted:\n"
+                f"Type annotation for `{cls.__name__}.{key}` can't be correctly interpreted:\n"
                 f"Use `sqldantic.Relationship` instead of `sqlalchemy.orm.relationship` "
                 "inside Annotated types."
             )
         if isinstance(meta, _Marker) and meta is not marker:
             raise TypeError(
-                f"Type annotation for `{cls_name}.{key}` can't be correctly interpreted:\n"
+                f"Type annotation for `{cls.__name__}.{key}` can't be correctly interpreted:\n"
                 f"Don't mix `sqldantic.Field` and `sqldantic.Relationship` "
             )
 
     return (
         typing_extra.mapped_from_field(field),
-        marker.construct(field) if marker else None,
+        marker.construct(field),
     )
 
 
@@ -403,11 +424,12 @@ class DeclarativeBase(BaseModel, metaclass=SQLModelMetaclass):
 
     __pydantic_parent_namespace__ = None
 
-    model_config = ConfigDict(validate_assignment=True)
+    model_config = ConfigDict(validate_assignment=False, extra="forbid")
 
     if TYPE_CHECKING:  # pragma: no cover
+        _sa_registry: Registry
 
-        def _init_values(self, values: dict[str, Any]) -> None: ...
+        def __init_values__(self, values: dict[str, Any]) -> None: ...
 
     __generic_new__ = object.__new__
     __generic_init__ = BaseModel.__init__

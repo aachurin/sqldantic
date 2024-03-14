@@ -182,27 +182,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast, ClassVar, Callable
 from pydantic.fields import FieldInfo, _Unset
-from sqlalchemy.orm import MappedColumn as _MappedColumn, mapped_column, relationship
+from sqlalchemy.orm import MappedColumn as _MappedColumn, relationship
 from sqlalchemy.orm.relationships import Relationship as _Relationship
+from .orm import mapped_column
+from .typing_extra import _Meta
+
 
 if TYPE_CHECKING:  # pragma: no cover
     {type_checking_imports}
     
 __all__ = ("Field", "Relationship")
-
-
-class _Meta:
-    __slots__ = ()
-
-
-class _Origin(_Meta):
-    __slots__ = ("origin", )
-    
-    def __init__(self, origin: Any):
-        self.origin = origin
-        
-    def __repr__(self) -> str:
-        return f"Marker({{self.origin.__name__}})"
 
 
 class _Marker(_Meta):
@@ -214,12 +203,10 @@ class _Marker(_Meta):
     def construct(cls, field: FieldInfo) -> Any:
         kwargs = {{k: v for k, v in field._attributes_set.items() if k in cls.attributes}}
         extra_kwargs = kwargs.pop("_kwargs", None)
-        if kwargs or extra_kwargs:
-            return cls.constructor(**kwargs, **(extra_kwargs or {{}}))  # type:ignore
-        return None
+        return cls.constructor(**kwargs, **(extra_kwargs or {{}}))  # type:ignore
         
     def __repr__(self) -> str:
-        return f"Marker({{self.constructor.__name__}})"
+        return f"{{self.constructor.__name__}}"
         
         
 class __FieldMarker(_Marker):

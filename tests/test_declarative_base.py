@@ -24,7 +24,7 @@ def test_decl_base_config2() -> None:
             something_else = 1
 
 
-def test_decl_base_type_annotation_map(engine) -> None:
+def test_decl_base_type_annotation_map() -> None:
     A = Annotated[int, Ge(-32768), Lt(32768)]
 
     class Base(DeclarativeBase):
